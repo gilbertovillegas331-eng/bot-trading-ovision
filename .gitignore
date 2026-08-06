@@ -1,21 +1,37 @@
-# Gradle
-.gradle/
-build/
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+htmlcov/
 
-# Local configuration
-local.properties
+# Entornos virtuales
+.venv/
+venv/
+env/
 
-# Android Studio
+# IDE
+.vscode/
 .idea/
-*.iml
 
-# Logs
-*.log
+# Logs y datos locales
+logs/*.log
+*.db
+*.sqlite
+*.sqlite3
 
-# APKs
-*.apk
-*.aab
+# Credenciales y configuración sensible
+.env
+.env.*
+config/local_settings.json
 
-# OS files
+# Sistema operativo
 .DS_Store
 Thumbs.db
+
+# Distribuciones
+build/
+dist/
+*.egg-info/
