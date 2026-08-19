@@ -2,19 +2,13 @@
 
 from __future__ import annotations
 
-from enum import Enum
 from typing import Sequence
 
-from engines.structure.swing_detector import Swing, SwingType
-
-
-class Trend(str, Enum):
-    BULLISH = "BULLISH"
-    BEARISH = "BEARISH"
-    NEUTRAL = "NEUTRAL"
+from models.structure import Swing, SwingType, Trend
 
 
 class TrendDetector:
+
     """Determina tendencia con los dos últimos highs y lows confirmados."""
 
     def detect(self, swings: Sequence[Swing]) -> Trend:

@@ -2,25 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from enum import Enum
 from typing import Sequence
 
 from models.market_data import MarketData
 
-
-class SwingType(str, Enum):
-    HIGH = "SWING_HIGH"
-    LOW = "SWING_LOW"
-
-
-@dataclass(frozen=True, slots=True)
-class Swing:
-    kind: SwingType
-    index: int
-    price: float
-    time: int
-
+from models.structure import Swing, SwingType
 
 class SwingDetector:
     """Detecta pivotes confirmados mediante una ventana simétrica."""
