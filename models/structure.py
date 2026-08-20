@@ -33,8 +33,20 @@ class StructureType(str, Enum):
 
 
 class Trend(str, Enum):
-    """Dirección estructural vigente."""
+    """Dirección estructural
+ vigente."""
 
     BULLISH = "BULLISH"
     BEARISH = "BEARISH"
     NEUTRAL = "NEUTRAL"
+
+@dataclass(frozen=True,
+slots=True)
+class StructureAnalysis:
+    """Resultado del análisis 
+de estructura de mercado."""
+
+    trend: Trend
+    swings: list[Swing]
+    bos: bool = False
+    choch: bool = False

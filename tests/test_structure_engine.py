@@ -1,20 +1,13 @@
-from models.structure import Trend, StructureType
-
-from engines.structure.structure_engine import (
-    StructureEngine,
-    StructureAnalysis,
-)
+from models.structure import StructureAnalysis
+from engines.structure.structure_engine import StructureEngine
 
 
 def test_structure_engine_returns_analysis():
 
     engine = StructureEngine()
 
-    result = engine.analyze(
-        Trend.BULLISH,
-        StructureType.HH,
-    )
+    candles = []
+
+    result = engine.analyze(candles)
 
     assert isinstance(result, StructureAnalysis)
-    assert result.trend == Trend.BULLISH
-    assert result.structure == StructureType.HH

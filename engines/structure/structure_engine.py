@@ -1,8 +1,8 @@
-***************P"""Coordinador inicial del motor de estructura."""
+from models.market_data import MarketData
+from models.structure import StructureAnalysis
+
 from engines.structure.swing_detector import SwingDetector
 from engines.structure.trend_detector import TrendDetector
-from models.market_data import MarketData
-
 
 
 class StructureEngine:
@@ -12,11 +12,12 @@ class StructureEngine:
         self.swing_detector = SwingDetector()
         self.trend_detector = TrendDetector()
 
-    def analyze(self, candles: list[MarketData]) -> dict:
+    def analyze(self, candles: list[MarketData]) -> StructureAnalysis:
         swings = self.swing_detector.detect(candles)
         trend = self.trend_detector.detect(swings)
-        return {
-            "trend": trend.value,
-            "swings": swings,
-        }
+
+        return StructureAnalysis(
+            trend=trend,
+            swings=swings,
+        )
 
