@@ -57,22 +57,26 @@ class ConfluenceEngine:
         if len(confluences) >= 3 and htf_bias == ltf_bias:
             
             # REGLA DE PROTECCIÓN SINTÉTICOS
-            if "C " in self.symbol and "Idx" in self.symbol:
-                direction = "SHORT" # Forzamos venta en Crash
+            simbolo_mayus = self.symbol.upper()
+            
+            # Activos SOLO de VENTA (Crash, Bear y StepRise)
+            if "C " in simbolo_mayus or "BEAR" in simbolo_mayus or "STEPRISE" in simbolo_mayus:
+                direction = "SHORT" 
                 confluences.append(Confluence(
-                    factor="Protección Crash Index",
-                    description="El activo es un índice de caída (Crash). Solo se permiten ventas.",
+                    factor="Protección Índice Bajista",
+                    description="El activo es de caída (Crash/Bear/StepRise). Solo se permiten ventas.",
                     weight=2
                 ))
-            elif "B " in self.symbol and "Idx" in self.symbol:
-                direction = "LONG" # Forzamos compra en Boom
+            # Activos SOLO de COMPRA (Boom, Bull y StepDrop)
+            elif "B " in simbolo_mayus or "BULL" in simbolo_mayus or "STEPDROP" in simbolo_mayus:
+                direction = "LONG" 
                 confluences.append(Confluence(
-                    factor="Protección Boom Index",
-                    description="El activo es un índice de subida (Boom). Solo se permiten compras.",
+                    factor="Protección Índice Alcista",
+                    description="El activo es de subida (Boom/Bull/StepDrop). Solo se permiten compras.",
                     weight=2
                 ))
             else:
-                # Para Forex y STP, obedecemos el análisis normal
+                # Para Forex, STP, Fortune, FlipRand, etc.
                 direction = "LONG" if htf_bias == "bull" else "SHORT"
             
             # Cálculo de SL y TP básicos (usando el ATR del LTF)
@@ -83,7 +87,6 @@ class ConfluenceEngine:
             else:
                 sl = self.current_price + (atr * 1.5)
                 tp = self.current_price - (atr * 3.0)
-
             signal = TradeSignal(
                 symbol=self.symbol,
                 direction=direction,
@@ -96,4 +99,4 @@ class ConfluenceEngine:
             )
             return signal
             
-        return None
+        return None 
