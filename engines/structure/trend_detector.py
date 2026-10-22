@@ -1,10 +1,5 @@
 """Clasificación inicial de tendencia mediante swings confirmados."""
 
-from __future__ import annotations
-
-from typing import Sequence
-
-from models.structure import Swing, SwingType, Trend
 
 
 class TrendDetector:
