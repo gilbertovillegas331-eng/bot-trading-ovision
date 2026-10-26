@@ -63,14 +63,38 @@ class ConfluenceEngine:
             else:
                 direction = "LONG" if htf_bias == "bull" else "SHORT"
             
-            atr = self.ltf.df['ATR'].iloc[-1]
+        direction = "LONG" if htf_bias == "bull" else "SHORT"
+        atr = self.ltf.df['ATR'].iloc[-1]
+
+        # --- MODELO 1: FIBONACCI Y ORDEN LIMITE ---
+        try:
+            obs = self.ltf.detect_order_blocks(ltf_events)
+        except Exception:
+            obs = []
+        
+        limit_price = self.current_price
+        
+        if obs:
+            ob_activo = obs[-1]
+            ob_low = ob_activo.get('bottom', self.current_price)
+            ob_high = ob_activo.get('top', self.current_price)
+            
+            if direction == "LONG":
+                limit_price = ob_high - ((ob_high - ob_low) * 0.618)
+                sl = ob_low - 15.0 
+                tp = limit_price + (atr * 3.0)
+            else:
+                limit_price = ob_low + ((ob_high - ob_low) * 0.618)
+                sl = ob_high + 15.0 
+                tp = limit_price - (atr * 3.0)
+        else:
             if direction == "LONG":
                 sl = self.current_price - (atr * 1.5)
                 tp = self.current_price + (atr * 3.0)
             else:
                 sl = self.current_price + (atr * 1.5)
                 tp = self.current_price - (atr * 3.0)
-
-            return TradeSignal(self.symbol, direction, self.current_price, sl, tp, 0.5, datetime.now(), confluences)
+        # --- FIN MODELO 1 ---
+            return TradeSignal(self.symbol, direction, limit_price, sl, tp, 0.5, datetime.now(), confluences)
             
         return None

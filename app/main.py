@@ -5,7 +5,7 @@ import MetaTrader5 as mt5
 import pandas as pd
 import requests
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from engines.confluence_engine import ConfluenceEngine
 
 TELEGRAM_TOKEN = "8597898994:AAFsT2LqmBtw1b2YWHvYruoUMHUsNSfbhSc"
@@ -42,15 +42,6 @@ def calcular_lotaje(symbol, entry, sl, balance_dia):
 
     
 def gestionar_trailing_y_parciales():
-    
-    # --- TRIGGER REPORTE DIARIO (23:55) ---
-    hora_actual = datetime.now()
-    if hora_actual.hour == 23 and hora_actual.minute == 55:
-     if not hasattr(enviar_reporte_diario, 'enviado_hoy') or enviar_reporte_diario.enviado_hoy != hora_actual.date():
-        enviar_reporte_diario()
-        enviar_reporte_diario.enviado_hoy = hora_actual.date()
-# --------------------------------------
-    
     posiciones = mt5.positions_get()
     if posiciones is None or len(posiciones) == 0: return
     
@@ -61,19 +52,18 @@ def gestionar_trailing_y_parciales():
         distancia_actual = abs(pos.price_current - pos.price_open)
         porcentaje_avance = distancia_actual / distancia_tp
         
-        # 1. EL "KEVIN" (Breakeven al 50% del camino)
-        if porcentaje_avance >= 0.5:
+        # 1. SALVAVIDAS (Breakeven al 40%)
+        if porcentaje_avance >= 0.40:
             if pos.type == mt5.POSITION_TYPE_BUY and (pos.sl < pos.price_open or pos.sl == 0):
                 mt5.order_send({"action": mt5.TRADE_ACTION_SLTP, "position": pos.ticket, "symbol": pos.symbol, "sl": pos.price_open, "tp": pos.tp})
-                enviar_telegram(f"🛡️ Breakeven activado en {pos.symbol}: Operación libre de riesgo.")
-                
+                enviar_telegram(f"🛡️ Salvavidas (40%): Breakeven en {pos.symbol}")
             elif pos.type == mt5.POSITION_TYPE_SELL and (pos.sl > pos.price_open or pos.sl == 0):
                 mt5.order_send({"action": mt5.TRADE_ACTION_SLTP, "position": pos.ticket, "symbol": pos.symbol, "sl": pos.price_open, "tp": pos.tp})
-                enviar_telegram(f"🛡️ Breakeven activado en {pos.symbol}: Operación libre de riesgo.")
+                enviar_telegram(f"🛡️ Salvavidas (40%): Breakeven en {pos.symbol}")
 
-        # 2. COBRO PARCIAL AL 70% (Tu idea del pellizco)
-        if porcentaje_avance >= 0.7 and pos.comment != "Parcial":
-            lote_parcial = round(pos.volume / 2, 2)
+        # 2. PELLIZCO (Cobrar 70% al llegar al 50%)
+        if porcentaje_avance >= 0.50 and pos.comment != "Parcial":
+            lote_parcial = round(pos.volume * 0.70, 2)
             if lote_parcial >= mt5.symbol_info(pos.symbol).volume_min:
                 tipo = mt5.ORDER_TYPE_SELL if pos.type == mt5.POSITION_TYPE_BUY else mt5.ORDER_TYPE_BUY
                 precio = mt5.symbol_info_tick(pos.symbol).bid if pos.type == mt5.POSITION_TYPE_BUY else mt5.symbol_info_tick(pos.symbol).ask
@@ -85,24 +75,22 @@ def gestionar_trailing_y_parciales():
                     "type_time": mt5.ORDER_TIME_GTC, "type_filling": mt5.ORDER_FILLING_IOC
                 }
                 mt5.order_send(req)
-                enviar_telegram(f"✂️ COBRO PARCIAL: {pos.symbol} (70% del camino asegurado)")
+                enviar_telegram(f"✂️ COBRO PARCIAL (50%): {pos.symbol} (70% asegurado)")
 
-        # 3. TRAILING STOP POR ESTRUCTURA (Price Action)
-        if porcentaje_avance >= 0.7:
-            df_m5 = get_mt5_data(pos.symbol, mt5.TIMEFRAME_M5, 3)
-            if df_m5 is not None and len(df_m5) >= 3:
-                vela_cerrada = df_m5.iloc[-2] 
+        # 3. RASTRO (M1, maximo 10 velas) - Se activa después del 50%
+        if porcentaje_avance >= 0.50:
+            df_m1 = get_mt5_data(pos.symbol, mt5.TIMEFRAME_M1, 12)
+            if df_m1 is not None and len(df_m1) >= 12:
+                ultimas_10 = df_m1.iloc[-11:-1] 
                 
                 if pos.type == mt5.POSITION_TYPE_BUY:
-                    nuevo_sl = vela_cerrada['low']
+                    nuevo_sl = ultimas_10['low'].min()
                     if nuevo_sl > pos.sl:
                         mt5.order_send({"action": mt5.TRADE_ACTION_SLTP, "position": pos.ticket, "symbol": pos.symbol, "sl": nuevo_sl, "tp": pos.tp})
-                        
                 elif pos.type == mt5.POSITION_TYPE_SELL:
-                    nuevo_sl = vela_cerrada['high']
+                    nuevo_sl = ultimas_10['high'].max()
                     if nuevo_sl < pos.sl or pos.sl == 0:
                         mt5.order_send({"action": mt5.TRADE_ACTION_SLTP, "position": pos.ticket, "symbol": pos.symbol, "sl": nuevo_sl, "tp": pos.tp})
-
 
 def ejecutar_orden(signal, balance_dia):
     lotaje = calcular_lotaje(signal.symbol, signal.entry_price, signal.stop_loss, balance_dia)
@@ -140,9 +128,9 @@ def run_ovision(balance_dia):
         if mt5.positions_get(symbol=sym) is not None and len(mt5.positions_get(symbol=sym)) > 0: continue
 
             # --- FILTRO ANTIRREENTRADA (COOLDOWN 15 MIN) ---
-        import datetime
+        
         ahora = datetime.now()
-        desde = ahora - datetime.timedelta(minutes=15)
+        desde = ahora - timedelta(minutes=15)
         deals = mt5.history_deals_get(desde, ahora)
         bloqueado = False
         if deals is not None:
