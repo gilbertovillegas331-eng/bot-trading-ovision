@@ -44,7 +44,7 @@ def calcular_lotaje(symbol, entry, sl, balance_dia):
 def gestionar_trailing_y_parciales():
     
     # --- TRIGGER REPORTE DIARIO (23:55) ---
-    hora_actual = datetime.datetime.now()
+    hora_actual = datetime.now()
     if hora_actual.hour == 23 and hora_actual.minute == 55:
      if not hasattr(enviar_reporte_diario, 'enviado_hoy') or enviar_reporte_diario.enviado_hoy != hora_actual.date():
         enviar_reporte_diario()
@@ -141,7 +141,7 @@ def run_ovision(balance_dia):
 
             # --- FILTRO ANTIRREENTRADA (COOLDOWN 15 MIN) ---
         import datetime
-        ahora = datetime.datetime.now()
+        ahora = datetime.now()
         desde = ahora - datetime.timedelta(minutes=15)
         deals = mt5.history_deals_get(desde, ahora)
         bloqueado = False
@@ -212,7 +212,7 @@ while True:
 
 
 def enviar_reporte_diario():
-    ahora = datetime.datetime.now()
+    ahora = datetime.now()
     inicio_dia = ahora.replace(hour=0, minute=0, second=0, microsecond=0)
     deals = mt5.history_deals_get(inicio_dia, ahora)
     
