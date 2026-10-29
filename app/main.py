@@ -8,15 +8,22 @@ import time
 from datetime import datetime, timedelta
 from engines.confluence_engine import ConfluenceEngine
 
-TELEGRAM_TOKEN = "8597898994:AAFsT2LqmBtw1b2YWHvYruoUMHUsNSfbhSc"
+TELEGRAM_TOKEN = "9048473930:AAGMy1UGgkb-Dwix-tfFRYwwI062s3VQDmc"
 TELEGRAM_CHAT_ID = "5205197349"
 TF_HTF = mt5.TIMEFRAME_H4
 TF_LTF = mt5.TIMEFRAME_M15
 TF_ENTRY = mt5.TIMEFRAME_M5
-MINUTOS_ESCANEO = 15
+MINUTOS_ESCANEO = 5
 SEGUNDOS_TRAILING = 30
 
 def enviar_telegram(mensaje):
+    mensaje = f"[MODELO 1] {mensaje}"
+
+    # --- GRABADORA PARA AUDITORÍA ---
+    with open("historial_señales.csv", "a", encoding="utf-8") as archivo:
+        archivo.write(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}, {mensaje}\n")
+    # --------------------------------
+
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     try: requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": mensaje})
     except: pass
@@ -112,7 +119,7 @@ def ejecutar_orden(signal, balance_dia):
     return True
 
 def run_ovision(balance_dia):
-    if not mt5.initialize(): return False
+    if not mt5.initialize(path="C:\\Program Files\\MetaTrader 5\\terminal64.exe"): return False
     print(f"\n[{pd.Timestamp.now().strftime('%H:%M:%S')}] 🔎 Escaneando...")
     
     todos_los_simbolos = mt5.symbols_get()
@@ -166,13 +173,13 @@ def run_ovision(balance_dia):
 
 if __name__ == "__main__":
     print("🚀 Ovision V3.2 (Francotirador) encendido...")
-    mt5.initialize()
+    mt5.initialize(path="C:\Program Files\MetaTrader 5\terminal64.exe")
     acc = mt5.account_info()
     balance_inicio_dia = acc.balance if acc else 1000
     ultimo_escaneo = 0
     # --- INICIO Y CONEXIÓN A MT5 ---
 print("Iniciando Ovision V3.2...")
-if not mt5.initialize():
+if not mt5.initialize(path="C:\\Program Files\\MetaTrader 5\\terminal64.exe"):
     print("❌ Error: No se pudo conectar a MetaTrader 5.")
     enviar_telegram("❌ Ovision V3.2: Error al conectar con MT5.")
     quit()
