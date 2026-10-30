@@ -3,6 +3,9 @@ import numpy as np
 
 class SMCEngine:
     def __init__(self, df: pd.DataFrame):
+        if df is None or len(df) == 0:
+           self.df = None
+           return
         self.df = df.copy()
         self.df['ATR'] = self._calculate_atr()
 

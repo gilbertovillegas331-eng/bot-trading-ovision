@@ -28,7 +28,7 @@ def enviar_telegram(mensaje):
     try: requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": mensaje})
     except: pass
 
-def get_mt5_data(symbol, timeframe, count=300):
+def get_mt5_data(symbol, timeframe, count=100):
     rates = mt5.copy_rates_from_pos(symbol, timeframe, 0, count)
     if rates is None or len(rates) == 0: return None
     df = pd.DataFrame(rates)
@@ -133,92 +133,58 @@ def ejecutar_orden(signal, balance_dia):
     return True
 
 def run_ovision(balance_dia):
-    if not mt5.initialize(path="C:\\Program Files\\MetaTrader 5\\terminal64.exe"): return False
-    print(f"\n[{pd.Timestamp.now().strftime('%H:%M:%S')}] 🔎 Escaneando...")
+    if not mt5.initialize(path="C:\\Program Files\\MetaTrader 5 agresivo\\terminal64.exe"): return False
+    print(f"\n[{pd.Timestamp.now().strftime('%H:%M:%S')}] 🔍 Escaneando...")
     
     todos_los_simbolos = mt5.symbols_get()
-    activos = [s.name for s in todos_los_simbolos if any(x in s.name.upper() for x in ["EURUSD", "XAUUSD", " C ", " B ", "STEP", "BULL", "BEAR"])]
+    activos = [s.name for s in todos_los_simbolos if any(x in s.name.upper() for x in ["EURUSD", "XAUUSD", "C ", "B ", "STEP", "BULL", "BEAR"])]
+    
     operaciones_esta_ronda = 0
 
     for sym in activos:
-        pos_mt5 = mt5.positions_get()
+        pos_mt5 = mt5.positions_get(symbol=sym)
         pos_actuales = len(pos_mt5) if pos_mt5 else 0
-        if (pos_actuales + operaciones_esta_ronda) >= 3: 
-            print("🛑 Límite de 3 operaciones alcanzado.")
-            break 
-        if mt5.positions_get(symbol=sym) is not None and len(mt5.positions_get(symbol=sym)) > 0: continue
 
-            # --- FILTRO ANTIRREENTRADA (COOLDOWN 15 MIN) ---
-        
-        ahora = datetime.now()
-        desde = ahora - timedelta(minutes=15)
-        deals = mt5.history_deals_get(desde, ahora)
-        bloqueado = False
-        if deals is not None:
-            for d in deals:
-                    # Revisa si hubo un cierre en este mismo símbolo
-                    if d.symbol == sym and d.entry == mt5.DEAL_ENTRY_OUT:
-                        bloqueado = True
-                        break
-            
-            if bloqueado:
-                print(f"⏳ {sym} en Cooldown (cerró hace <15 min). Buscando otro activo...")
-                continue
-            # ----------------------------------------------- 
-            
+        if (pos_actuales + operaciones_esta_ronda) >= 3:
+            print("🛑 Límite de 3 operaciones alcanzado.")
+            break
+
+        if pos_actuales > 0:
+            continue
+
+        # --- FILTRO ANTIRREENTRADA (COOLDOWN PROFESIONAL) ---
+        pos_abiertas = mt5.positions_get(symbol=sym)
+        if pos_abiertas is not None and len(pos_abiertas) > 0:
+            continue
+
+
+        # --- DESPERTAR MT5 (FORZAR DESCARGA DE VELAS) ---
+        if not mt5.symbol_select(sym, True):
+            print(f"⚠️ No se pudo seleccionar {sym} en MT5. Saltando...")
+            continue
+        time.sleep(0.1) # Pequeña pausa para que MT5 procese
+
+        # --- ANÁLISIS DE MERCADO ---
         df_htf = get_mt5_data(sym, TF_HTF)
         df_ltf = get_mt5_data(sym, TF_LTF)
         if df_htf is None or df_ltf is None: continue
-            
+
         engine = ConfluenceEngine(df_htf, df_ltf, sym)
         signal = engine.analyze()
-        
-    if signal and signal.total_score() >= 9:
+
+        if signal and signal.total_score() >= 6:
             tarjeta = signal.build_explanation()
             print(tarjeta)
-            if (pos_actuales + operaciones_esta_ronda) < 3:
-                enviar_telegram(tarjeta)
-                if ejecutar_orden(signal, balance_dia):
-                    enviar_telegram(f"🚀 ¡Orden Ejecutada! {signal.direction} {sym}")
-                    operaciones_esta_ronda += 1
-                    time.sleep(2)
+            print("-" * 60)
+            
+            enviar_telegram(tarjeta)
+            
+            if ejecutar_orden(signal, balance_dia):
+                enviar_telegram(f"🚀 ¡Orden Ejecutada! {signal.direction} {sym}")
+                operaciones_esta_ronda += 1
+                time.sleep(2)
             else:
-                enviar_telegram(tarjeta + "\n\n⚠️ SEÑAL NO EJECUTADA: Límite alcanzado.")
-
-if __name__ == "__main__":
-    print("🚀 Ovision V3.2 (Francotirador) encendido...")
-    mt5.initialize(path="C:\Program Files\MetaTrader 5\terminal64.exe")
-    acc = mt5.account_info()
-    balance_inicio_dia = acc.balance if acc else 1000
-    ultimo_escaneo = 0
-    # --- INICIO Y CONEXIÓN A MT5 ---
-print("Iniciando Ovision V3.2...")
-if not mt5.initialize(path="C:\\Program Files\\MetaTrader 5\\terminal64.exe"):
-    print("❌ Error: No se pudo conectar a MetaTrader 5.")
-    enviar_telegram("❌ Ovision V3.2: Error al conectar con MT5.")
-    quit()
-    
-acc = mt5.account_info()
-balance_inicio_dia = acc.balance if acc else 1000
-
-# --- MENSAJE DE ENCENDIDO A TELEGRAM ---
-mensaje_encendido = f"🚀 Ovision V3.2 (Francotirador) encendido.\n💰 Balance inicial del día: ${balance_inicio_dia:.2f}\n⚙️ Escaneando el mercado..."
-enviar_telegram(mensaje_encendido)
-print("✅ Mensaje de encendido enviado a Telegram.")
-    
-while True:
-        try:
-            if time.time() - ultimo_escaneo >= (MINUTOS_ESCANEO * 60):
-                run_ovision(balance_inicio_dia)
-                ultimo_escaneo = time.time()
-            gestionar_trailing_y_parciales()
-            time.sleep(SEGUNDOS_TRAILING)
-        except KeyboardInterrupt:
-            break
-        except Exception as e:
-            print(f"❌ Error: {e}. Reintentando...")
-            time.sleep(10)
-
+                print(f"🔍 {sym}: Error al ejecutar.")
 
 def enviar_reporte_diario():
     ahora = datetime.now()
@@ -228,36 +194,58 @@ def enviar_reporte_diario():
     if deals is None or len(deals) == 0:
         enviar_telegram("📊 REPORTE DIARIO: No hubo operaciones cerradas hoy.")
         return
-
-    ganadas = 0
-    perdidas = 0
-    pnl_total = 0.0
-    activos = {}
-
-    for d in deals:
-        if d.entry == mt5.DEAL_ENTRY_OUT:
+        
+        ganadas = 0
+        perdidas = 0
+        pnl_total = 0.0
+        activos = {}
+        
+        for d in deals:
+         if d.entry == mt5.DEAL_ENTRY_OUT:
             if d.profit > 0: ganadas += 1
             elif d.profit < 0: perdidas += 1
             pnl_total += d.profit
             
             if d.symbol not in activos: activos[d.symbol] = 0.0
             activos[d.symbol] += d.profit
+        
+        total_ops = ganadas + perdidas
+        win_rate = (ganadas / total_ops * 100) if total_ops > 0 else 0.0
+        mejor_activo = max(activos, key=activos.get) if activos else "Ninguno"
+        
+        mensaje = f"📊 REPORTE DIARIO OVISION V3.2\n"
+        mensaje += f"━━━━━━━━━━━━━━━━━━\n"
+        mensaje += f"✅ Ganadas: {ganadas}\n"
+        mensaje += f"❌ Perdidas: {perdidas}\n"
+        mensaje += f"🎯 Win Rate: {win_rate:.2f}%\n"
+        mensaje += f"💰 PnL Total: ${pnl_total:.2f}\n"
+        mensaje += f"🏆 Mejor Activo: {mejor_activo}\n"
+        mensaje += f"━━━━━━━━━━━━━━━━━━"
+        
+        enviar_telegram(mensaje)
+        print("✅ Reporte diario enviado a Telegram.")
+        
+        
+        
 
-    total_ops = ganadas + perdidas
-    win_rate = (ganadas / total_ops * 100) if total_ops > 0 else 0.0
-    mejor_activo = max(activos, key=activos.get) if activos else "Ninguno"
 
-    mensaje = f"📊 REPORTE DIARIO OVISION V3.2\n"
-    mensaje += f"━━━━━━━━━━━━━━━━━━\n"
-    mensaje += f"✅ Ganadas: {ganadas}\n"
-    mensaje += f"❌ Perdidas: {perdidas}\n"
-    mensaje += f"🎯 Win Rate: {win_rate:.2f}%\n"
-    mensaje += f"💰 PnL Total: ${pnl_total:.2f}\n"
-    mensaje += f"🏆 Mejor Activo: {mejor_activo}\n"
-    mensaje += f"━━━━━━━━━━━━━━━━━━"
+if __name__ == "__main__":
+    print("🚀 Ovision encendido...")
+    enviar_telegram("🚀 Ovision ha arrancado en modo 24/7.")
+    acc = mt5.account_info()
+    balance_inicio_dia = acc.balance if acc else 1000
 
-    enviar_telegram(mensaje)
-    print("✅ Reporte diario enviado a Telegram.")
-
-
+    while True:
+        try:
+            if not mt5.initialize():
+                time.sleep(10)
+                continue
+            run_ovision(balance_inicio_dia)
+            gestionar_trailing_y_parciales()
+            time.sleep(SEGUNDOS_TRAILING)
+        except KeyboardInterrupt:
+            break
+        except Exception as e:
+            print(f"❌ Error: {e}. Reintentando...")
+            time.sleep(10)
 
