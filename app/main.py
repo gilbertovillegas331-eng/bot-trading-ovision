@@ -8,6 +8,7 @@ import time
 from datetime import datetime, timedelta
 from engines.confluence_engine import ConfluenceEngine
 
+memoria_tp = {}
 TELEGRAM_TOKEN = "9048473930:AAGMy1UGgkb-Dwix-tfFRYwwI062s3VQDmc"
 TELEGRAM_CHAT_ID = "5205197349"
 TF_HTF = mt5.TIMEFRAME_H4
@@ -169,8 +170,12 @@ def run_ovision(balance_dia):
         df_ltf = get_mt5_data(sym, TF_LTF)
         if df_htf is None or df_ltf is None: continue
 
-        engine = ConfluenceEngine(df_htf, df_ltf, sym)
-        signal = engine.analyze()
+        try:
+            engine = ConfluenceEngine(df_htf, df_ltf, sym)
+            signal = engine.analyze()
+        except Exception as e:
+            print(f"⚠️ Error analizando {sym}: {e}. Saltando...")
+            continue
 
         if signal and signal.total_score() >= 6:
             tarjeta = signal.build_explanation()
@@ -179,11 +184,18 @@ def run_ovision(balance_dia):
             
             enviar_telegram(tarjeta)
             
-            if ejecutar_orden(signal, balance_dia):
+            # --- CANDADO POST-TP ---
+        if sym in memoria_tp:
+            tp_anterior = memoria_tp[sym]
+            if signal.direction == "LONG" and signal.price > (tp_anterior * 0.995): continue
+            if signal.direction == "SHORT" and signal.price < (tp_anterior * 1.005): continue
+
+        if ejecutar_orden(signal, balance_dia):
                 enviar_telegram(f"🚀 ¡Orden Ejecutada! {signal.direction} {sym}")
                 operaciones_esta_ronda += 1
+                memoria_tp[sym] = signal.take_profit
                 time.sleep(2)
-            else:
+        else:
                 print(f"🔍 {sym}: Error al ejecutar.")
 
 def enviar_reporte_diario():
