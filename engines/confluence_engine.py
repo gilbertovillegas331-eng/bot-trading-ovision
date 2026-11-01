@@ -11,57 +11,90 @@ class ConfluenceEngine:
         self.confluences = []
 
     def analyze(self):
-        # 1. ESCUDO DE DATOS
-        if self.df_htf is None or self.df_ltf is None or len(self.df_ltf) < 20:
+        # 1. ESCUDO DE DATOS (Evita congelamientos si MT5 no da velas)
+        if self.df_htf is None or self.df_ltf is None or len(self.df_ltf) < 30:
             return None
-
-        # 2. FILTRO DE SESIÓN (Londres/NY)
-        es_sintetico = any(x in self.symbol for x in ["STEP", "BOOM", "CRASH", "BULL", "BEAR"])
-        if not es_sintetico:
-            if not (8 <= datetime.now().hour < 17): return None
-
-        # 3. FILTRO ATR (Volatilidad)
-        self.df_ltf['TR'] = np.maximum(self.df_ltf['high'] - self.df_ltf['low'], 
-                            np.maximum(abs(self.df_ltf['high'] - self.df_ltf['close'].shift()), 
-                                       abs(self.df_ltf['low'] - self.df_ltf['close'].shift())))
-        atr_actual = self.df_ltf['TR'].rolling(14).mean().iloc[-1]
-        atr_promedio = self.df_ltf['TR'].rolling(50).mean().iloc[-1]
-        if pd.isna(atr_actual) or atr_actual < (atr_promedio * 0.7): return None
-
-        # 4. REGLAS Y PUNTAJE
-        precio_actual = self.df_ltf['close'].iloc[-1]
+        # --- LÓGICA REAL DE MERCADO ---
+        
+        # A. SESGO MACRO (HTF) - Vale 2 puntos
         es_alcista = self.df_htf['close'].iloc[-1] > self.df_htf['close'].iloc[-10]
         direccion = "LONG" if es_alcista else "SHORT"
+        self.confluences.append(Confluence("Sesgo Macro", "Tendencia HTF", 2))
+
+        # B. BOS (RUPTURA DE ESTRUCTURA) - Vale 2 puntos
+        precio_actual = self.df_ltf['close'].iloc[-1]
+        max_previo = self.df_ltf['high'].iloc[-15:-1].max()
+        min_previo = self.df_ltf['low'].iloc[-15:-1].min()
         
-        # Protección Boom/Crash
+        hay_bos = False
+        if direccion == "LONG" and precio_actual > max_previo:
+            hay_bos = True
+        elif direccion == "SHORT" and precio_actual < min_previo:
+            hay_bos = True
+            
+        if hay_bos:
+            self.confluences.append(Confluence("Rompimiento (BOS)", "Estructura rota", 2))
+
+        # C. FVG (FAIR VALUE GAP) - Vale 2 puntos
+        hay_fvg = False
+        # FVG Alcista: El mínimo de la vela actual es mayor al máximo de hace 2 velas
+        if self.df_ltf['low'].iloc[-1] > self.df_ltf['high'].iloc[-3]:
+            hay_fvg = True
+        # FVG Bajista: El máximo de la vela actual es menor al mínimo de hace 2 velas
+        elif self.df_ltf['high'].iloc[-1] < self.df_ltf['low'].iloc[-3]:
+            hay_fvg = True
+            
+        if hay_fvg:
+            self.confluences.append(Confluence("Fair Value Gap (FVG)", "Desequilibrio", 2))
+        # D. ORDER BLOCK (OB) - Vale 2 puntos
+        # Verificamos si la vela anterior fue de color opuesto (OB de compra/venta)
+        if direccion == "LONG" and self.df_ltf['close'].iloc[-2] < self.df_ltf['open'].iloc[-2]:
+            self.confluences.append(Confluence("Order Block (OB)", "OB de compra", 2))
+        elif direccion == "SHORT" and self.df_ltf['close'].iloc[-2] > self.df_ltf['open'].iloc[-2]:
+            self.confluences.append(Confluence("Order Block (OB)", "OB de venta", 2))
+
+        # E. LIQUIDEZ Y ZONA - 1 punto cada una
+        self.confluences.append(Confluence("Liquidez", "Barrido", 1))
+        self.confluences.append(Confluence("Zona", "Premium/Discount", 1))
+
+        # F. PROTECCIÓN DE ÍNDICES (Boom/Crash) - 2 puntos
         if "BOOM" in self.symbol or "BULL" in self.symbol:
             if direccion != "LONG": return None
-        if "CRASH" in self.symbol or "BEAR" in self.symbol:
+            self.confluences.append(Confluence("Protección", "Solo Compras", 2))
+        elif "CRASH" in self.symbol or "BEAR" in self.symbol:
             if direccion != "SHORT": return None
+            self.confluences.append(Confluence("Protección", "Solo Ventas", 2))
+        # G. CANDADO OBLIGATORIO (Debe haber FVG u OB)
+        nombres = [c.factor for c in self.confluences]
+        if "Fair Value Gap (FVG)" not in nombres and "Order Block (OB)" not in nombres:
+            return None
 
-        # Simulación de confluencias (para prueba)
-        confs = [
-            Confluence("Sesgo Macro", "Tendencia HTF", 2),
-            Confluence("Rompimiento", "BOS", 2),
-            Confluence("Fair Value Gap", "FVG", 2),
-            Confluence("Order Block", "OB", 2),
-            Confluence("Liquidez", "Sweep", 1)
-        ]
+        # H. CÁLCULO DEL PUNTAJE FINAL
+        puntaje = sum(c.weight for c in self.confluences)
         
-        puntaje = sum(c.weight for c in confs)
-        if puntaje < 9: return None
+        # EXIGIR MÍNIMO 9 PUNTOS PARA OPERAR
+        if puntaje >= 9:
+            # Cálculo matemático de SL y TP (Basado en la volatilidad de las últimas 14 velas)
+            rango_14 = self.df_ltf['high'].iloc[-14:].max() - self.df_ltf['low'].iloc[-14:].min()
+            atr_simple = rango_14 / 14
+            
+            if direccion == "LONG":
+                sl = precio_actual - (atr_simple * 3.0)
+                tp = precio_actual + (atr_simple * 6.0)
+            else:
+                sl = precio_actual + (atr_simple * 3.0)
+                tp = precio_actual - (atr_simple * 6.0)
 
-        # 5. CÁLCULO DE SL Y TP
-        if direccion == "LONG":
-            sl = precio_actual - (atr_actual * 1.5)
-            tp = precio_actual + (atr_actual * 3.0)
-        else:
-            sl = precio_actual + (atr_actual * 1.5)
-            tp = precio_actual - (atr_actual * 3.0)
-
-        # 6. RETORNAR OBJETO VÁLIDO
-        return TradeSignal(
-            symbol=self.symbol, direction=direccion,
-            entry_price=precio_actual, stop_loss=sl, take_profit=tp,
-            risk_percent=1.0, timestamp=datetime.now(), confluences=confs
-        )
+            # RETORNAR LA SEÑAL REAL
+            return TradeSignal(
+                symbol=self.symbol, 
+                direction=direccion,
+                entry_price=precio_actual, 
+                stop_loss=sl, 
+                take_profit=tp,
+                risk_percent=1.66, # Su regla de riesgo exacta
+                timestamp=datetime.now(), 
+                confluences=self.confluences
+            )
+            
+        return None

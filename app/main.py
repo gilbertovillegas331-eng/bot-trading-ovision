@@ -9,13 +9,15 @@ from datetime import datetime, timedelta
 from engines.confluence_engine import ConfluenceEngine
 
 memoria_tp = {}
+memoria_sl = {}
+memoria_alertas = {}
 TELEGRAM_TOKEN = "9048473930:AAGMy1UGgkb-Dwix-tfFRYwwI062s3VQDmc"
 TELEGRAM_CHAT_ID = "5205197349"
 TF_HTF = mt5.TIMEFRAME_H4
 TF_LTF = mt5.TIMEFRAME_M15
 TF_ENTRY = mt5.TIMEFRAME_M5
 MINUTOS_ESCANEO = 0.0333
-SEGUNDOS_TRAILING = 30
+SEGUNDOS_TRAILING = 1
 
 def enviar_telegram(mensaje):
     mensaje = f"[MODELO 1] {mensaje}"
@@ -57,7 +59,6 @@ def gestionar_trailing_y_parciales():
         distancia_tp = abs(pos.tp - pos.price_open)
         if distancia_tp == 0: continue
 
-        # Calculo de distancia a favor (SIN ABS)
         if pos.type == mt5.POSITION_TYPE_BUY:
             distancia_actual = pos.price_current - pos.price_open
         else:
@@ -65,7 +66,6 @@ def gestionar_trailing_y_parciales():
 
         porcentaje_avance = distancia_actual / distancia_tp
 
-        # 1. SALVAVIDAS (40% del recorrido al TP)
         if porcentaje_avance >= 0.40:
             if pos.type == mt5.POSITION_TYPE_BUY and (pos.sl < pos.price_open or pos.sl == 0):
                 mt5.order_send({"action": mt5.TRADE_ACTION_SLTP, "position": pos.ticket, "symbol": pos.symbol, "sl": pos.price_open, "tp": pos.tp})
@@ -74,7 +74,6 @@ def gestionar_trailing_y_parciales():
                 mt5.order_send({"action": mt5.TRADE_ACTION_SLTP, "position": pos.ticket, "symbol": pos.symbol, "sl": pos.price_open, "tp": pos.tp})
                 enviar_telegram(f"🛡️ Salvavidas (40%): Breakeven en {pos.symbol}")
 
-        # 2. COBRO PARCIAL (50% del recorrido al TP)
         if porcentaje_avance >= 0.50 and pos.comment != "Parcial":
             lote_parcial = round(pos.volume * 0.70, 2)
             if lote_parcial >= mt5.symbol_info(pos.symbol).volume_min:
@@ -88,8 +87,6 @@ def gestionar_trailing_y_parciales():
                 }
                 mt5.order_send(req)
                 enviar_telegram(f"✂️ COBRO PARCIAL (50%): {pos.symbol} (70% asegurado)")
-
-        # 3. TRAILING STOP (30% restante, velas M1)
         if porcentaje_avance >= 0.50:
             df_m1 = get_mt5_data(pos.symbol, mt5.TIMEFRAME_M1, 12)
             if df_m1 is not None and len(df_m1) >= 10:
@@ -102,20 +99,66 @@ def gestionar_trailing_y_parciales():
                     nuevo_sl = ultimas_10['high'].max()
                     if nuevo_sl < pos.sl or pos.sl == 0:
                         mt5.order_send({"action": mt5.TRADE_ACTION_SLTP, "position": pos.ticket, "symbol": pos.symbol, "sl": nuevo_sl, "tp": pos.tp})
-
+    
 
 def ejecutar_orden(signal, balance_dia):
+    # 1. BÚSQUEDA INTELIGENTE DEL NOMBRE REAL EN MT5
+    simbolo_buscado = signal.symbol.upper().replace(" ", "").replace(".", "").replace("_", "")
+    simbolo_real = None
+    
+    for s in mt5.symbols_get():
+        s_limpio = s.name.upper().replace(" ", "").replace(".", "").replace("_", "")
+        if s_limpio == simbolo_buscado:
+            simbolo_real = s.name
+            break
+
+    if not simbolo_real:
+        print(f"❌ Error: El activo {signal.symbol} no existe en MT5.")
+        return False
+
+    if not mt5.symbol_select(simbolo_real, True):
+        print(f"❌ Error: No se pudo activar {simbolo_real} en el Observador.")
+        return False
+    
+    tick = None
+    for _ in range(5):
+        tick = mt5.symbol_info_tick(simbolo_real)
+        if tick is not None: break
+        time.sleep(1)
+
+    if tick is None:
+        print(f"❌ Error: No se pudo obtener precio de {simbolo_real}")
+        return False
+        
+    info = mt5.symbol_info(simbolo_real)
+    if info is None or info.trade_tick_size == 0 or info.trade_tick_value == 0:
+        print(f"❌ Error: No se pudo obtener info de {simbolo_real}")
+        return False
+
+    # 2. CÁLCULO PROFESIONAL DE LOTAJE
     riesgo_usd = balance_dia * (signal.risk_percent / 100)
     distancia_sl = abs(signal.entry_price - signal.stop_loss)
-    lotaje = round(riesgo_usd / (distancia_sl * 10), 2)
-    if lotaje < 0.01: lotaje = 0.01
+    
+    if distancia_sl == 0:
+        return False
 
+    distancia_en_puntos = distancia_sl / info.trade_tick_size
+    valor_punto = info.trade_tick_value
+    
+    lotaje = round(riesgo_usd / (distancia_en_puntos * valor_punto), 2)
+    
+    if lotaje < info.volume_min: 
+        lotaje = info.volume_min
+
+    precio_real = tick.ask if signal.direction == "LONG" else tick.bid
+
+    # 3. CREAR LA ORDEN
     request = {
         "action": mt5.TRADE_ACTION_DEAL,
-        "symbol": signal.symbol,
+        "symbol": simbolo_real, # Usamos el nombre exacto del bróker
         "volume": lotaje,
         "type": mt5.ORDER_TYPE_BUY if signal.direction == "LONG" else mt5.ORDER_TYPE_SELL,
-        "price": signal.entry_price,
+        "price": precio_real,
         "sl": signal.stop_loss,
         "tp": signal.take_profit,
         "deviation": 20,
@@ -126,21 +169,47 @@ def ejecutar_orden(signal, balance_dia):
     }
     
     result = mt5.order_send(request)
-    if result.retcode != mt5.TRADE_RETCODE_DONE:
-        print(f"❌ Error en {signal.symbol}: {result.comment}")
+    if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
+        print(f"❌ Error MT5 al ejecutar {simbolo_real}: {result.comment if result else 'None'}")
         return False
-    
-    print(f"✅ ORDEN ABIERTA: {signal.direction} {signal.symbol} | Lotes: {lotaje}")
+        
+    print(f"✅ ORDEN ABIERTA: {signal.direction} {simbolo_real} | Lotes: {lotaje}")
     return True
 
+
 def run_ovision(balance_dia):
-    if not mt5.initialize(path="C:\\Program Files\\MetaTrader 5 agresivo\\terminal64.exe"): return False
+    if not mt5.initialize(): return False
     print(f"\n[{pd.Timestamp.now().strftime('%H:%M:%S')}] 🔍 Escaneando...")
     
     todos_los_simbolos = mt5.symbols_get()
-    activos = [s.name for s in todos_los_simbolos if any(x in s.name.upper() for x in ["EURUSD", "XAUUSD", "C ", "B ", "STEP", "BULL", "BEAR"])]
-    
+    lista_blanca = ["C300", "C500", "C600", "C900", "C1000", 
+                    "B300", "B500", "B600", "B900", "B1000", 
+                    "VORTX20", "VORTX40", "VORTX80", 
+                    "FORTUNE100", "FORTUNE1000", "FORTUNEX200", "FORTUNEX500", 
+                    "BULL400", "BULL500", "BULL777", "BULL900", "BULL1000", 
+                    "BEAR400", "BEAR500", "BEAR777", "BEAR900", "BEAR1000", 
+                    "FLIPRAND1", "FLIPRAND2", "FLIPRAND3", "FLIPRAND4", "FLIPRAND5", 
+                    "STEPRISE400", "STEPRISE600", "STEPRISE800", "STEPRISE999", "STEPRISE1200", 
+                    "STEPDROP400", "STEPDROP600", "STEPDROP800", "STEPDROP999", "STEPDROP1200"]
+
+    activos = []
+    for s in todos_los_simbolos:
+        # Normalizador: Quita espacios, puntos y guiones bajos, y pasa a mayúsculas
+        nombre_limpio = s.name.upper().replace(" ", "").replace(".", "").replace("_", "")
+        
+        if nombre_limpio in lista_blanca:
+            activos.append(s.name)
+
     operaciones_esta_ronda = 0
+    
+    # --- CASTIGAR ACTIVOS QUE TOCARON SL HACE 5 MIN ---
+    hace_5_min = datetime.now() - timedelta(minutes=5)
+    deals_recientes = mt5.history_deals_get(hace_5_min, datetime.now())
+    if deals_recientes:
+        for d in deals_recientes:
+            if d.entry == mt5.DEAL_ENTRY_OUT and d.profit < 0:
+                memoria_sl[d.symbol] = datetime.now()
+    
 
     for sym in activos:
         pos_mt5 = mt5.positions_get(symbol=sym)
@@ -165,6 +234,14 @@ def run_ovision(balance_dia):
             continue
         time.sleep(0.1) # Pequeña pausa para que MT5 procese
 
+        # --- CANDADO POST-STOP LOSS ---
+        if sym in memoria_sl:
+            tiempo_bloqueo = memoria_sl[sym]
+            if (datetime.now() - tiempo_bloqueo).total_seconds() < 3600: # 1 hora de castigo
+                continue # Saltar activo si está castigado
+            else:
+                del memoria_sl[sym] # Si ya pasó la hora, perdonar
+
         # --- ANÁLISIS DE MERCADO ---
         df_htf = get_mt5_data(sym, TF_HTF)
         df_ltf = get_mt5_data(sym, TF_LTF)
@@ -177,26 +254,33 @@ def run_ovision(balance_dia):
             print(f"⚠️ Error analizando {sym}: {e}. Saltando...")
             continue
 
-        if signal and signal.total_score() >= 6:
+        if signal and signal.total_score >= 6:
             tarjeta = signal.build_explanation()
             print(tarjeta)
             print("-" * 60)
             
+            # --- FILTRO ANTI-SPAM ---
+            if sym in memoria_alertas:
+                tiempo_ultima_alerta = memoria_alertas[sym]
+                if (datetime.now() - tiempo_ultima_alerta).total_seconds() < 900: # 15 minutos
+                    continue 
+            
+            memoria_alertas[sym] = datetime.now()
             enviar_telegram(tarjeta)
             
-            # --- CANDADO POST-TP ---
-        if sym in memoria_tp:
-            tp_anterior = memoria_tp[sym]
-            if signal.direction == "LONG" and signal.price > (tp_anterior * 0.995): continue
-            if signal.direction == "SHORT" and signal.price < (tp_anterior * 1.005): continue
+                # --- CANDADO POST-TP ---
+            if sym in memoria_tp:
+                tp_anterior = memoria_tp[sym]
+                if signal.direction == "LONG" and signal.price > (tp_anterior * 0.995): continue
+                if signal.direction == "SHORT" and signal.price < (tp_anterior * 1.005): continue
 
-        if ejecutar_orden(signal, balance_dia):
-                enviar_telegram(f"🚀 ¡Orden Ejecutada! {signal.direction} {sym}")
-                operaciones_esta_ronda += 1
-                memoria_tp[sym] = signal.take_profit
-                time.sleep(2)
-        else:
-                print(f"🔍 {sym}: Error al ejecutar.")
+            if ejecutar_orden(signal, balance_dia):
+                    enviar_telegram(f"🚀 ¡Orden Ejecutada! {signal.direction} {sym}")
+                    operaciones_esta_ronda += 1
+                    memoria_tp[sym] = signal.take_profit
+                    time.sleep(2)
+            else:
+                    print(f"🔍 {sym}: Error al ejecutar.")
 
 def enviar_reporte_diario():
     ahora = datetime.now()
